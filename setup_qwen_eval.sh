@@ -23,6 +23,7 @@ echo "=== Activating environment ==="
 # Conda activate doesn't work directly in non-interactive shells unless you source it
 source "$(conda info --base)/etc/profile.d/conda.sh"
 conda activate qwen-eval-env
+echo "Active Conda environment: $CONDA_DEFAULT_ENV"
 
 echo "=== Installing PyTorch and dependencies ==="
 pip install torch==2.6.0 torchvision==0.21.0 torchaudio==2.6.0 --index-url https://download.pytorch.org/whl/cu126
@@ -58,6 +59,8 @@ echo "=== Activating environment ==="
 # Conda activate doesn't work directly in non-interactive shells unless you source it
 source "$(conda info --base)/etc/profile.d/conda.sh"
 conda activate rf100vl-env
+echo "Active Conda environment: $CONDA_DEFAULT_ENV"
+
 pip install rf100vl==1.1.0
 
 echo "===exporting roboflow key==="
