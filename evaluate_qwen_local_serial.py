@@ -11,27 +11,25 @@ import copy
 from qwen_vl_utils import smart_resize #expects qwen-vl-utils==0.0.8
 from utils.qwen_eval_utils import *
 from utils.shared_eval_utils import *
-from transformers import Qwen2_5_VLForConditionalGeneration, AutoProcessor
+from transformers import Qwen2_5_VLForConditionalGeneration, AutoProcessor, Qwen3VLForConditionalGeneration
 from qwen_vl_utils import process_vision_info
 import torch
 
 
-MODEL_NAME = "Qwen2.5-VL-7B-Instruct"
-MODEL_DESC = "infer_fixed_seed_dup"
+# MODEL_NAME = "Qwen2.5-VL-7B-Instruct"
+MODEL_NAME = "Qwen3-VL-4B-Instruct"
+MODEL_DESC = "serial_debug"
 # DEBUG = False
 # ROOT_DIR = "/data3/spjain/rf20-vl-fsod"
 DATASET = {
-    0 : ["actions", "aerial-airport"],
-    1 : ["aquarium-combined", "defect-detection", "dentalai"],
-    # 1: ["dentalai"],
-    2 : ["flir-camera-objects","x-ray-id"],
+    # 0 : ["actions", "aerial-airport"],
+    0: ["aerial-airport"],
+    1 : ["aquarium-combined", "defect-detection", "dentalai", "trail-camera"],
     3 : ["gwhd2021", "lacrosse-object-detection", "all-elements"],
-    # 3 : ["lacrosse-object-detection"],
     4 : ["soda-bottles", "orionproducts", "wildfire-smoke"],
     5 : ["paper-parts"],
     6 : ["new-defects-in-wood", "the-dreidel-project","recode-waste"],
-    # 7 : ["trail-camera", "water-meter", "wb-prova"]
-    7: ["trail-camera"]
+    7 : ["flir-camera-objects", "water-meter", "wb-prova","x-ray-id"]
 }
 
 logging.basicConfig(
@@ -55,11 +53,14 @@ def set_seed(seed=100):
 
 def load_qwen_model():
     
-    model = Qwen2_5_VLForConditionalGeneration.from_pretrained(
-        "Qwen/"+MODEL_NAME,
-        torch_dtype= torch.bfloat16,
-        attn_implementation="flash_attention_2",
-        device_map="auto"
+    # model = Qwen2_5_VLForConditionalGeneration.from_pretrained(
+    #     "Qwen/"+MODEL_NAME,
+    #     torch_dtype= torch.bfloat16,
+    #     attn_implementation="flash_attention_2",
+    #     device_map="auto"
+    # )
+    model = Qwen3VLForConditionalGeneration.from_pretrained(
+        "Qwen/"+MODEL_NAME, torch_dtype=torch.bfloat16, attn_implementation="flash_attention_2", device_map="auto"
     )
     processor = AutoProcessor.from_pretrained("Qwen/"+MODEL_NAME)
     model.eval()
@@ -559,42 +560,47 @@ def process_dataset(model, processor, dataset_dir, few_shot, just_instructions, 
 
     total_images_to_process = len(args_list)
 
-    with torch.inference_mode():
+    # with concurrent.futures.ThreadPoolExecutor(max_workers=MAX_WORKERS) as executor:
+    #     futures = {executor.submit(process_image, args): args[1] for args in args_list}
 
-        with concurrent.futures.ThreadPoolExecutor(max_workers=MAX_WORKERS) as executor:
-            futures = {executor.submit(process_image, args): args[1] for args in args_list}
+    #     with tqdm(total=len(futures), desc=f"Processing {dataset_name}", unit="image", leave=False) as pbar:
+    for image_info in tqdm(images, desc=f"Processing {dataset_name}", unit="image"):
+            
+        # for future in concurrent.futures.as_completed(futures):
+        #     image_id_from_future_key = futures[future]
+        try:
+            img_id = image_info["id"]
+            coco_result, error_msg, image_was_successful, processed_image_key_str = process_image((
+                image_info, image_info["id"], image_info["file_name"],
+                image_info["height"], image_info["width"],
+                test_folder,
+                categories_dict, results_dir, vis_dir,
+                prompts, few_shot, just_instructions, combined,status_file,
+                status_file_lock,model,processor
+            ))
+            processed_count += 1
 
-            with tqdm(total=len(futures), desc=f"Processing {dataset_name}", unit="image", leave=False) as pbar:
-                for future in concurrent.futures.as_completed(futures):
-                    image_id_from_future_key = futures[future]
+            if error_msg:
+                error_count += 1
+                print(f"Image ID {img_id}: Error - {error_msg}")
+                results_map.setdefault(img_id, [])
+            elif coco_result is None and error_msg is None:
+                skipped_count += 1
+                results_map.setdefault(img_id, [])
+                logger.debug(f"Image ID {img_id}: Confirmed skip based on status (already True).")
+                master_status_dict_to_update[processed_image_key_str] = True
+            elif coco_result is not None and error_msg is None:
+                results_map[img_id] = coco_result
+                if image_was_successful:
+                        master_status_dict_to_update[processed_image_key_str] = True
+                logger.debug(f"Updated results for image {img_id}. Success: {image_was_successful}")
 
-                    try:
-                        coco_result, error_msg, image_was_successful, processed_image_key_str = future.result()
-                        processed_count += 1
-
-                        if error_msg:
-                            error_count += 1
-                            pbar.write(f"Image ID {image_id_from_future_key}: Error - {error_msg}")
-                            results_map.setdefault(image_id_from_future_key, [])
-                        elif coco_result is None and error_msg is None:
-                            skipped_count += 1
-                            results_map.setdefault(image_id_from_future_key, [])
-                            logger.debug(f"Image ID {image_id_from_future_key}: Confirmed skip based on status (already True).")
-                            master_status_dict_to_update[processed_image_key_str] = True
-                        elif coco_result is not None and error_msg is None:
-                            results_map[image_id_from_future_key] = coco_result
-                            if image_was_successful:
-                                master_status_dict_to_update[processed_image_key_str] = True
-                            logger.debug(f"Updated results for image {image_id_from_future_key}. Success: {image_was_successful}")
-
-                    except Exception as exc:
-                        processed_count += 1
-                        error_count += 1
-                        logger.error(f"Image ID {image_id_from_future_key} generated an exception during future processing: {exc}", exc_info=True)
-                        pbar.write(f"Image ID {image_id_from_future_key}: Worker exception - {exc}")
-                        results_map.setdefault(image_id_from_future_key, [])
-
-                    pbar.update(1)
+        except Exception as exc:
+            processed_count += 1
+            error_count += 1
+            logger.error(f"Image ID {img_id} generated an exception during future processing: {exc}", exc_info=True)
+            print(f"Image ID {img_id}: Worker exception - {exc}")
+            results_map.setdefault(img_id, [])
 
     final_results_list = []
     for img_id, annotations_list in results_map.items():

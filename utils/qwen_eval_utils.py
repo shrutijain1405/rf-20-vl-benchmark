@@ -101,15 +101,15 @@ def parse_qwen_response(response, logger):
         json_text = re.sub(r",\s*(\]|\})", r"\1", json_text)
 
         if not is_valid_json(json_text):
-            logger.warning(f"Invalid JSON structure detected in response: {json_text[:200]}...")
+            logger.warning(f"Invalid JSON structure detected in response: {json_text}...")
             match = re.search(r'(\[.*\]|\{.*\})', json_text, re.DOTALL)
             if match:
                 json_text = match.group(1)
                 if not is_valid_json(json_text):
-                    logger.warning(f"Could not extract valid JSON even after searching: {json_text[:200]}...")
+                    logger.warning(f"Could not extract valid JSON even after searching: {json_text}...")
                     return []
             else:
-                 logger.warning(f"No JSON list/object found in the response: {json_text[:200]}...")
+                 logger.warning(f"No JSON list/object found in the response: {json_text}...")
                  return []
 
         parsed_data = json.loads(json_text)

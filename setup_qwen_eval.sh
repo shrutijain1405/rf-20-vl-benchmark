@@ -52,6 +52,12 @@ conda install -c conda-forge opencv -y
 echo "=== Installing supervision ==="
 conda install -c conda-forge supervision -y
 
+echo "=== INstalling openai ==="
+conda install openai -y
+
+echo "===upgrading numpy==="
+conda install -c conda-forge numpy=2.0.1
+
 echo "=== installing roboflow ==="
 conda deactivate
 conda create -n rf100vl-env python=3.9.23 -y
