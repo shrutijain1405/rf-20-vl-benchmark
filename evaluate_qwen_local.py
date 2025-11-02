@@ -18,12 +18,12 @@ import torch
 
 MODEL_NAME = "Qwen2.5-VL-7B-Instruct"
 MODEL_DESC = "debug"
-DEBUG = False
-ROOT_DIR = "/data3/spjain/rf20-vl-fsod"
+# DEBUG = False
+# ROOT_DIR = "/data3/spjain/rf20-vl-fsod"
 DATASET = {
     0 : ["actions", "aerial-airport"],
-    # 1 : ["aquarium-combined", "defect-detection", "dentalai"],
-    1: ["dentalai"],
+    1 : ["aquarium-combined", "defect-detection", "dentalai"],
+    # 1: ["dentalai"],
     2 : ["flir-camera-objects","x-ray-id"],
     3 : ["gwhd2021", "lacrosse-object-detection", "all-elements"],
     # 3 : ["lacrosse-object-detection"],
@@ -636,6 +636,8 @@ def main():
                         help='Use both instructions and few-shot examples (if available)')
     parser.add_argument('--save_dir', type=str, default=None,
                         help='Optional custom root directory to save results and visualizations')
+    parser.add_argument('--data_dir', type=str, default=None,
+                        help='dir where data is there')
     parser.add_argument("--cuda", type=int, default=0, help="CUDA device id to use")
     
     args = parser.parse_args()
@@ -683,13 +685,13 @@ def main():
     )
     logger = logging.getLogger(__name__)
 
-    # for d in glob.glob(os.path.join(ROOT_DIR, "*")):
+    # for d in glob.glob(os.path.join(args.data_dir, "*")):
     #     print(os.path.basename(d))
 
-    all_dataset_dirs = sorted([d for d in glob.glob(os.path.join(ROOT_DIR, "*"))
+    all_dataset_dirs = sorted([d for d in glob.glob(os.path.join(args.data_dir, "*"))
                                if os.path.isdir(d) and os.path.exists(os.path.join(d, "test")) and os.path.basename(d) in DATASET[args.cuda] ])
 
-    logger.info(f"Found {len(all_dataset_dirs)} total datasets in {ROOT_DIR}. Will process all.")
+    logger.info(f"Found {len(all_dataset_dirs)} total datasets in {args.data_dir}. Will process all.")
     logger.info(f"Selected mode: {eval_mode_str}")
     logger.info(f"Using model: {MODEL_NAME}")
 
