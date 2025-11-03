@@ -56,7 +56,7 @@ echo "=== INstalling openai ==="
 conda install openai -y
 
 echo "===upgrading numpy==="
-conda install -c conda-forge numpy=2.0.1
+conda install -c conda-forge numpy=2.0.1 -y
 
 echo "=== installing roboflow ==="
 conda deactivate

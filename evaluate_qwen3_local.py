@@ -22,8 +22,7 @@ MODEL_DESC = "resize_parse_fix_debug1"
 # DEBUG = False
 # ROOT_DIR = "/data3/spjain/rf20-vl-fsod"
 DATASET = {
-    # 0 : ["actions", "aerial-airport"],
-    0: ["aquarium-combined"],
+    0 : ["actions", "aerial-airport"],
     1 : ["aquarium-combined", "defect-detection", "dentalai", "trail-camera"],
     3 : ["gwhd2021", "lacrosse-object-detection", "all-elements"],
     4 : ["soda-bottles", "orionproducts", "wildfire-smoke"],
@@ -556,9 +555,9 @@ def process_dataset(model, processor, dataset_dir, few_shot, just_instructions, 
 
     #     with tqdm(total=len(futures), desc=f"Processing {dataset_name}", unit="image", leave=False) as pbar:
     for image_info in tqdm(images, desc=f"Processing {dataset_name}", unit="image"):
-        if(image_info["file_name"] != 'IMG_2279_jpeg_jpg.rf.0a869bcdd1d8dcf306906cc6df1fe9d5.jpg'):
-            continue
-        # if(processed_count >= 10):
+        # if(image_info["file_name"] != 'IMG_2279_jpeg_jpg.rf.0a869bcdd1d8dcf306906cc6df1fe9d5.jpg'):
+        #     continue
+        # # if(processed_count >= 10):
         #     break
         try:
             img_id = image_info["id"]

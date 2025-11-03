@@ -18,7 +18,7 @@ import torch
 
 MODEL_NAME = "Qwen2.5-VL-7B-Instruct"
 # MODEL_NAME = "Qwen3-VL-4B-Instruct"
-MODEL_DESC = "serial"
+MODEL_DESC = "serial_parse_fix"
 # DEBUG = False
 # ROOT_DIR = "/data3/spjain/rf20-vl-fsod"
 DATASET = {
@@ -31,6 +31,7 @@ DATASET = {
     6 : ["new-defects-in-wood", "the-dreidel-project","recode-waste"],
     7 : ["flir-camera-objects", "water-meter", "wb-prova","x-ray-id"]
 }
+NUM_FEW_SHOT_EXAMPLES = 3
 
 logging.basicConfig(
     level=logging.INFO,
@@ -205,7 +206,8 @@ def create_few_shot_messages_qwen(train_folder, categories_dict):
 
     examples_added = 0
     for img_id in annotated_image_ids:
-
+        if(examples_added >= NUM_FEW_SHOT_EXAMPLES):
+            break
         img_info = images_by_id[img_id]
         original_width = img_info['width']
         original_height = img_info['height']

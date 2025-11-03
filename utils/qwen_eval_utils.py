@@ -115,7 +115,7 @@ def parse_qwen_response(response, logger):
                         valid_objects.append(parsed)
 
                     json_text = json.dumps(valid_objects)
-                    print("**********",json_text)
+                    # print("**********",json_text)
                     if(valid_objects == []):
                         logger.warning(f"Could not extract valid JSON even after searching: {json_text}...")
                         return []
