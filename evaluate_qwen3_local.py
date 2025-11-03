@@ -16,14 +16,14 @@ from qwen_vl_utils import process_vision_info
 import torch
 
 
-MODEL_NAME = "Qwen2.5-VL-7B-Instruct"
-# MODEL_NAME = "Qwen3-VL-4B-Instruct"
-MODEL_DESC = "serial"
+# MODEL_NAME = "Qwen2.5-VL-7B-Instruct"
+MODEL_NAME = "Qwen3-VL-4B-Instruct"
+MODEL_DESC = "resize_parse_fix_debug1"
 # DEBUG = False
 # ROOT_DIR = "/data3/spjain/rf20-vl-fsod"
 DATASET = {
-    0 : ["actions", "aerial-airport"],
-    # 0: ["aerial-airport"],
+    # 0 : ["actions", "aerial-airport"],
+    0: ["aquarium-combined"],
     1 : ["aquarium-combined", "defect-detection", "dentalai", "trail-camera"],
     3 : ["gwhd2021", "lacrosse-object-detection", "all-elements"],
     4 : ["soda-bottles", "orionproducts", "wildfire-smoke"],
@@ -31,6 +31,7 @@ DATASET = {
     6 : ["new-defects-in-wood", "the-dreidel-project","recode-waste"],
     7 : ["flir-camera-objects", "water-meter", "wb-prova","x-ray-id"]
 }
+NUM_FEW_SHOT_EXAMPLES = 3
 
 logging.basicConfig(
     level=logging.INFO,
@@ -53,15 +54,15 @@ def set_seed(seed=100):
 
 def load_qwen_model():
     
-    model = Qwen2_5_VLForConditionalGeneration.from_pretrained(
-        "Qwen/"+MODEL_NAME,
-        torch_dtype= torch.bfloat16,
-        attn_implementation="flash_attention_2",
-        device_map="auto"
-    )
-    # model = Qwen3VLForConditionalGeneration.from_pretrained(
-    #     "Qwen/"+MODEL_NAME, torch_dtype=torch.bfloat16, attn_implementation="flash_attention_2", device_map="auto"
+    # model = Qwen2_5_VLForConditionalGeneration.from_pretrained(
+    #     "Qwen/"+MODEL_NAME,
+    #     torch_dtype= torch.bfloat16,
+    #     attn_implementation="flash_attention_2",
+    #     device_map="auto"
     # )
+    model = Qwen3VLForConditionalGeneration.from_pretrained(
+        "Qwen/"+MODEL_NAME, torch_dtype=torch.bfloat16, attn_implementation="flash_attention_2", device_map="auto"
+    )
     processor = AutoProcessor.from_pretrained("Qwen/"+MODEL_NAME)
     model.eval()
 
@@ -134,10 +135,8 @@ def inference(messages, model, processor):
     # ```
 
     #For scaling the bbox coordinates later
-    input_height = inputs['image_grid_thw'][0][1]*14
-    input_width = inputs['image_grid_thw'][0][2]*14
-
-    return output_text, input_width, input_height
+    
+    return output_text
             
 
 def format_ground_truth_for_model_qwen(annotations_for_image, categories_dict, width, height):
@@ -205,11 +204,12 @@ def create_few_shot_messages_qwen(train_folder, categories_dict):
 
     examples_added = 0
     for img_id in annotated_image_ids:
-
+        if(examples_added >= NUM_FEW_SHOT_EXAMPLES):
+            break
         img_info = images_by_id[img_id]
         original_width = img_info['width']
         original_height = img_info['height']
-        input_height, input_width = smart_resize(original_height, original_width, min_pixels=MIN_PIXELS, max_pixels=MAX_PIXELS)
+        # input_height, input_width = smart_resize(original_height, original_width, min_pixels=MIN_PIXELS, max_pixels=MAX_PIXELS)
         image_path = os.path.join(train_folder, img_info['file_name'])
 
         base64_image_example = encode_image(image_path)
@@ -219,8 +219,8 @@ def create_few_shot_messages_qwen(train_folder, categories_dict):
             "content": [
                 {
                     "type": "image_url",
-                    "min_pixels": MIN_PIXELS,
-                    "max_pixels": MAX_PIXELS,
+                    # "min_pixels": MIN_PIXELS,
+                    # "max_pixels": MAX_PIXELS,
                     "image_url": f"data:image/jpeg;base64,{base64_image_example}"
                 },
                 {"type": "text", "text": user_prompt_text_for_example},
@@ -232,17 +232,17 @@ def create_few_shot_messages_qwen(train_folder, categories_dict):
         scaled_annotations = []
         for ann in example_annotations:
             x, y, w, h = ann['bbox']
-            x_scaled = x * input_width / original_width
-            y_scaled = y * input_height / original_height
-            w_scaled = w * input_width / original_width
-            h_scaled = h * input_height / original_height
+            x_scaled = x * 1000 / original_width
+            y_scaled = y * 1000 / original_height
+            w_scaled = w * 1000 / original_width
+            h_scaled = h * 1000 / original_height
 
             scaled_ann = ann.copy()
             scaled_ann['bbox'] = [x_scaled, y_scaled, w_scaled, h_scaled]
             scaled_annotations.append(scaled_ann)
 
         assistant_response_text = format_ground_truth_for_model_qwen(
-            scaled_annotations, categories_dict, input_width, input_height
+            scaled_annotations, categories_dict, 1000, 1000
         )
 
         assistant_message = {
@@ -301,7 +301,7 @@ def precompute_prompts_for_dataset_qwen(dataset_dir, categories, categories_dict
     return prompts
 
 def convert_to_coco_format(qwen_predictions, image_id, original_width, original_height, 
-                           input_width, input_height, categories_dict):
+                            categories_dict):
     """Convert Qwen detection results to COCO format"""
     coco_annotations = []
     
@@ -327,10 +327,10 @@ def convert_to_coco_format(qwen_predictions, image_id, original_width, original_
             continue
             
         x1, y1, x2, y2 = bbox_2d
-        x1 = int(x1 / input_width * original_width)
-        y1 = int(y1 / input_height * original_height)
-        x2 = int(x2 / input_width * original_width)
-        y2 = int(y2 / input_height * original_height)
+        x1 = int(x1 / 1000 * original_width)
+        y1 = int(y1 / 1000 * original_height)
+        x2 = int(x2 / 1000 * original_width)
+        y2 = int(y2 / 1000 * original_height)
         
         width = x2 - x1
         height = y2 - y1
@@ -434,8 +434,8 @@ def process_image(args):
 
         final_messages.extend(processed_few_shot_messages)
         
-        input_height, input_width = smart_resize(height, width, min_pixels=MIN_PIXELS, max_pixels=MAX_PIXELS)
-
+        # input_height, input_width = smart_resize(height, width, min_pixels=MIN_PIXELS, max_pixels=MAX_PIXELS)
+        # import pdb;pdb.set_trace()
         final_user_message = {
             "role": "user",
             "content": [
@@ -453,7 +453,7 @@ def process_image(args):
 
         logger.info(f"INITIATING MODEL call for image {file_name} (ID: {image_id}) using mode '{mode}' with {len(final_messages)} total messages.")
 
-        response_text,_, _  = inference(
+        response_text  = inference(
             messages=final_messages,
             model=model,
             processor = processor
@@ -461,7 +461,7 @@ def process_image(args):
 
         coco_annotations, original_boxes_for_vis = convert_to_coco_format(
             response_text, image_id, width, height,
-            input_width, input_height, categories_dict
+            categories_dict
         )
 
         if not coco_annotations:
@@ -478,7 +478,7 @@ def process_image(args):
         vis_save_path = os.path.join(vis_dir, file_name)
         visualize_predictions(
             image_path, original_boxes_for_vis if original_boxes_for_vis else [],
-            input_width, input_height,
+            1000, 1000,
             width, height,
             categories_dict, vis_save_path, logger
         )
@@ -509,7 +509,7 @@ def process_dataset(model, processor, dataset_dir, few_shot, just_instructions, 
     categories_dict = {cat["id"]: cat["name"] for cat in categories}
 
     prompts = precompute_prompts_for_dataset_qwen(dataset_dir, category_names, categories_dict)
-    # import pdb;pdb.set_trace()
+    
     images = annotations.get("images", [])
 
     results_file = os.path.join(results_dir, f"predictions_"+dataset_name+".json")
@@ -540,15 +540,6 @@ def process_dataset(model, processor, dataset_dir, few_shot, just_instructions, 
                 current_master_status_on_disk = {}
     master_status_dict_to_update = current_master_status_on_disk.copy()
 
-    args_list = [
-        (image_info, image_info["id"], image_info["file_name"],
-         image_info["height"], image_info["width"],
-         test_folder,
-         categories_dict, results_dir, vis_dir,
-         prompts, few_shot, just_instructions, combined,status_file,
-         status_file_lock,model,processor)
-        for image_info in images
-    ]
 
     results_map = {}
     for ann in existing_results:
@@ -558,16 +549,17 @@ def process_dataset(model, processor, dataset_dir, few_shot, just_instructions, 
                 results_map[img_id] = []
             results_map[img_id].append(ann)
 
-    total_images_to_process = len(args_list)
+    total_images_to_process = len(images)
 
     # with concurrent.futures.ThreadPoolExecutor(max_workers=MAX_WORKERS) as executor:
     #     futures = {executor.submit(process_image, args): args[1] for args in args_list}
 
     #     with tqdm(total=len(futures), desc=f"Processing {dataset_name}", unit="image", leave=False) as pbar:
     for image_info in tqdm(images, desc=f"Processing {dataset_name}", unit="image"):
-            
-        # for future in concurrent.futures.as_completed(futures):
-        #     image_id_from_future_key = futures[future]
+        if(image_info["file_name"] != 'IMG_2279_jpeg_jpg.rf.0a869bcdd1d8dcf306906cc6df1fe9d5.jpg'):
+            continue
+        # if(processed_count >= 10):
+        #     break
         try:
             img_id = image_info["id"]
             coco_result, error_msg, image_was_successful, processed_image_key_str = process_image((

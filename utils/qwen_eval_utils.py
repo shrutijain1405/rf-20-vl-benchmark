@@ -106,8 +106,19 @@ def parse_qwen_response(response, logger):
             if match:
                 json_text = match.group(1)
                 if not is_valid_json(json_text):
-                    logger.warning(f"Could not extract valid JSON even after searching: {json_text}...")
-                    return []
+                    # logger.warning(f"Could not extract valid JSON even after searching: {json_text}...")
+                    # return []
+                    object_matches = re.findall(r'\{[^{}]*\}', json_text, re.DOTALL)
+                    valid_objects = []
+                    for obj in object_matches:
+                        parsed = json.loads(obj)
+                        valid_objects.append(parsed)
+
+                    json_text = json.dumps(valid_objects)
+                    print("**********",json_text)
+                    if(valid_objects == []):
+                        logger.warning(f"Could not extract valid JSON even after searching: {json_text}...")
+                        return []
             else:
                  logger.warning(f"No JSON list/object found in the response: {json_text}...")
                  return []
