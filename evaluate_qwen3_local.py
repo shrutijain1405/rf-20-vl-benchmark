@@ -11,25 +11,25 @@ import copy
 from qwen_vl_utils import smart_resize #expects qwen-vl-utils==0.0.8
 from utils.qwen_eval_utils import *
 from utils.shared_eval_utils import *
-from transformers import Qwen2_5_VLForConditionalGeneration, AutoProcessor, Qwen3VLForConditionalGeneration
+from transformers import Qwen2_5_VLForConditionalGeneration, AutoProcessor, Qwen3VLForConditionalGeneration, Qwen3VLMoeForConditionalGeneration
 from qwen_vl_utils import process_vision_info
 import torch
 
 
 # MODEL_NAME = "Qwen2.5-VL-7B-Instruct"
-MODEL_NAME = "Qwen3-VL-4B-Instruct"
-MODEL_DESC = "resize_parse_fix_debug1"
+# MODEL_NAME = "Qwen3-VL-4B-Instruct"
+MODEL_DESC = ""
 # DEBUG = False
 # ROOT_DIR = "/data3/spjain/rf20-vl-fsod"
-DATASET = {
-    0 : ["actions", "aerial-airport"],
-    1 : ["aquarium-combined", "defect-detection", "dentalai", "trail-camera"],
-    3 : ["gwhd2021", "lacrosse-object-detection", "all-elements"],
-    4 : ["soda-bottles", "orionproducts", "wildfire-smoke"],
-    5 : ["paper-parts"],
-    6 : ["new-defects-in-wood", "the-dreidel-project","recode-waste"],
-    7 : ["flir-camera-objects", "water-meter", "wb-prova","x-ray-id"]
-}
+# DATASET = {
+#     0 : ["actions", "aerial-airport"],
+#     1 : ["aquarium-combined", "defect-detection", "dentalai", "trail-camera"],
+#     3 : ["gwhd2021", "lacrosse-object-detection", "all-elements"],
+#     4 : ["soda-bottles", "orionproducts", "wildfire-smoke"],
+#     5 : ["paper-parts"],
+#     6 : ["new-defects-in-wood", "the-dreidel-project","recode-waste"],
+#     7 : ["flir-camera-objects", "water-meter", "wb-prova","x-ray-id"]
+# }
 NUM_FEW_SHOT_EXAMPLES = 3
 
 logging.basicConfig(
@@ -51,7 +51,7 @@ def set_seed(seed=100):
         torch.cuda.manual_seed_all(seed)
 
 
-def load_qwen_model():
+def load_qwen_model(model_name):
     
     # model = Qwen2_5_VLForConditionalGeneration.from_pretrained(
     #     "Qwen/"+MODEL_NAME,
@@ -59,10 +59,10 @@ def load_qwen_model():
     #     attn_implementation="flash_attention_2",
     #     device_map="auto"
     # )
-    model = Qwen3VLForConditionalGeneration.from_pretrained(
-        "Qwen/"+MODEL_NAME, torch_dtype=torch.bfloat16, attn_implementation="flash_attention_2", device_map="auto"
+    model = Qwen3VLMoeForConditionalGeneration.from_pretrained(
+        "Qwen/"+model_name, torch_dtype=torch.bfloat16, attn_implementation="flash_attention_2", device_map="auto"
     )
-    processor = AutoProcessor.from_pretrained("Qwen/"+MODEL_NAME)
+    processor = AutoProcessor.from_pretrained("Qwen/"+model_name)
     model.eval()
 
     print("processor.tokenizer.padding_side:", processor.tokenizer.padding_side)
@@ -486,7 +486,7 @@ def process_image(args):
 
     return coco_annotations, error_message_for_return, current_attempt_status, image_key
 
-def process_dataset(model, processor, dataset_dir, few_shot, just_instructions, combined, results_dir, vis_dir):
+def process_dataset(model, processor, dataset_dir, few_shot, just_instructions, combined, results_dir, vis_dir, model_name):
     """Process a single dataset using the selected mode and status file."""
     dataset_name = os.path.basename(dataset_dir)
 
@@ -518,7 +518,7 @@ def process_dataset(model, processor, dataset_dir, few_shot, just_instructions, 
     error_count = 0
     skipped_count = 0
 
-    logger.info(f"Processing dataset: {dataset_name} with model {MODEL_NAME}")
+    logger.info(f"Processing dataset: {dataset_name} with model {model_name}")
     logger.info(f"Found {len(images)} images in annotations.")
     logger.info(f"Results will be stored in {results_dir}")
     logger.info(f"Status file: {os.path.join(results_dir, dataset_name+'_status.pkl')}")
@@ -639,7 +639,9 @@ def main():
                         help='Optional custom root directory to save results and visualizations')
     parser.add_argument('--data_dir', type=str, default=None,
                         help='dir where data is there')
-    parser.add_argument("--cuda", type=int, default=0, help="CUDA device id to use")
+    parser.add_argument('--model_name', type=str, default="Qwen3-VL-235B-A22B-Instruct",
+                        help='model name')
+    # parser.add_argument("--cuda", type=int, default=0, help="CUDA device id to use")
     
     args = parser.parse_args()
 
@@ -653,7 +655,7 @@ def main():
         eval_mode_str = "instructions"
     else:
         eval_mode_str = "basic"
-    run_name = MODEL_NAME+"_"+eval_mode_str+"_"+MODEL_DESC
+    run_name = args.model_name+"_"+eval_mode_str+"_"+MODEL_DESC
 
     log_file_name_base = run_name
 
@@ -690,13 +692,15 @@ def main():
     #     print(os.path.basename(d))
 
     all_dataset_dirs = sorted([d for d in glob.glob(os.path.join(args.data_dir, "*"))
-                               if os.path.isdir(d) and os.path.exists(os.path.join(d, "test")) and os.path.basename(d) in DATASET[args.cuda] ])
+                               if os.path.isdir(d) and os.path.exists(os.path.join(d, "test")) 
+                            #    and os.path.basename(d) in DATASET[args.cuda] 
+                               ])
 
     logger.info(f"Found {len(all_dataset_dirs)} total datasets in {args.data_dir}. Will process all.")
     logger.info(f"Selected mode: {eval_mode_str}")
-    logger.info(f"Using model: {MODEL_NAME}")
+    logger.info(f"Using model: {args.model_name}")
 
-    model, processor = load_qwen_model()
+    model, processor = load_qwen_model(args.model_name)
 
     dataset_stats = {}
     for dataset_dir in tqdm(all_dataset_dirs, desc="Processing datasets", unit="dataset"):
@@ -710,7 +714,8 @@ def main():
             args.just_instructions,
             args.combined,
             output_dir_root,
-            visualize_dir_root
+            visualize_dir_root,
+            args.model_name
         )
         dataset_stats[dataset_name] = {"processed": processed, "errors": errored, "skipped": skipped}
         logger.info(f"Finished processing dataset: {dataset_name}")
