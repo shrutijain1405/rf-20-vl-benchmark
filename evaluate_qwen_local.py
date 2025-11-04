@@ -11,28 +11,26 @@ import copy
 from qwen_vl_utils import smart_resize #expects qwen-vl-utils==0.0.8
 from utils.qwen_eval_utils import *
 from utils.shared_eval_utils import *
-from transformers import Qwen2_5_VLForConditionalGeneration, AutoProcessor
+from transformers import Qwen2_5_VLForConditionalGeneration, AutoProcessor, Qwen3VLForConditionalGeneration, Qwen3VLMoeForConditionalGeneration
 from qwen_vl_utils import process_vision_info
 import torch
 
 
-MODEL_NAME = "Qwen2.5-VL-7B-Instruct"
-MODEL_DESC = "infer_fixed_seed_dup"
-# DEBUG = False
+NUM_FEW_SHOT_EXAMPLES = 3
+# MODEL_NAME = "Qwen2.5-VL-7B-Instruct"
+# MODEL_NAME = "Qwen3-VL-4B-Instruct"
+MODEL_DESC = ""
 # ROOT_DIR = "/data3/spjain/rf20-vl-fsod"
 DATASET = {
     0 : ["actions", "aerial-airport"],
-    1 : ["aquarium-combined", "defect-detection", "dentalai"],
-    # 1: ["dentalai"],
-    2 : ["flir-camera-objects","x-ray-id"],
+    1 : ["aquarium-combined", "defect-detection", "dentalai", "trail-camera"],
     3 : ["gwhd2021", "lacrosse-object-detection", "all-elements"],
-    # 3 : ["lacrosse-object-detection"],
     4 : ["soda-bottles", "orionproducts", "wildfire-smoke"],
     5 : ["paper-parts"],
     6 : ["new-defects-in-wood", "the-dreidel-project","recode-waste"],
-    # 7 : ["trail-camera", "water-meter", "wb-prova"]
-    7: ["trail-camera"]
+    7 : ["flir-camera-objects", "water-meter", "wb-prova","x-ray-id"]
 }
+
 
 logging.basicConfig(
     level=logging.INFO,
@@ -53,15 +51,30 @@ def set_seed(seed=100):
         torch.cuda.manual_seed_all(seed)
 
 
-def load_qwen_model():
+def load_qwen_model(model_name):
     
-    model = Qwen2_5_VLForConditionalGeneration.from_pretrained(
-        "Qwen/"+MODEL_NAME,
+   
+    model = None
+    if(model_name.startswith("Qwen2.5-VL")):
+         model = Qwen2_5_VLForConditionalGeneration.from_pretrained(
+        "Qwen/"+model_name,
         torch_dtype= torch.bfloat16,
         attn_implementation="flash_attention_2",
         device_map="auto"
     )
-    processor = AutoProcessor.from_pretrained("Qwen/"+MODEL_NAME)
+    elif(model_name.startswith("Qwen3-VL-235B")):
+        model = Qwen3VLMoeForConditionalGeneration.from_pretrained(
+            "Qwen/"+model_name, torch_dtype=torch.bfloat16, attn_implementation="flash_attention_2", device_map="auto"
+        ) 
+    elif(model_name.startswith("Qwen3-VL")):
+        model = Qwen3VLForConditionalGeneration.from_pretrained(
+            "Qwen/"+model_name, torch_dtype=torch.bfloat16, attn_implementation="flash_attention_2", device_map="auto"
+        )
+    else:
+        print("Error: Invalid model name")
+        return None, None
+
+    processor = AutoProcessor.from_pretrained("Qwen/"+model_name)
     model.eval()
 
     print("processor.tokenizer.padding_side:", processor.tokenizer.padding_side)
@@ -95,9 +108,6 @@ def load_qwen_model():
     return model, processor
 
 def inference(messages, model, processor):
-    """
-    
-    """
     set_seed()
     text_input = processor.apply_chat_template(
         messages, tokenize=False, add_generation_prompt=True
@@ -131,12 +141,8 @@ def inference(messages, model, processor):
     #         {"bbox_2d": [1145, 563, 1427, 920], "label": "Adult", "score": 0.95}
     #     ]
     # ```
-
-    #For scaling the bbox coordinates later
-    input_height = inputs['image_grid_thw'][0][1]*14
-    input_width = inputs['image_grid_thw'][0][2]*14
-
-    return output_text, input_width, input_height
+    
+    return output_text
             
 
 def format_ground_truth_for_model_qwen(annotations_for_image, categories_dict, width, height):
@@ -169,7 +175,7 @@ def format_ground_truth_for_model_qwen(annotations_for_image, categories_dict, w
     json_string = json.dumps(output_boxes, indent=2)
     return json_string
 
-def create_few_shot_messages_qwen(train_folder, categories_dict):
+def create_few_shot_messages_qwen(train_folder, categories_dict, model_name):
     """
     Creates few-shot examples as a list of alternating user/assistant message dicts
     for the Qwen API.
@@ -204,11 +210,15 @@ def create_few_shot_messages_qwen(train_folder, categories_dict):
 
     examples_added = 0
     for img_id in annotated_image_ids:
-
+        if(examples_added >= NUM_FEW_SHOT_EXAMPLES):
+            break
         img_info = images_by_id[img_id]
         original_width = img_info['width']
         original_height = img_info['height']
-        input_height, input_width = smart_resize(original_height, original_width, min_pixels=MIN_PIXELS, max_pixels=MAX_PIXELS)
+        input_height = 1000
+        input_width = 1000
+        if(model_name.startswith("Qwen2.5-VL")):
+            input_height, input_width = smart_resize(original_height, original_width, min_pixels=MIN_PIXELS, max_pixels=MAX_PIXELS)
         image_path = os.path.join(train_folder, img_info['file_name'])
 
         base64_image_example = encode_image(image_path)
@@ -256,7 +266,7 @@ def create_few_shot_messages_qwen(train_folder, categories_dict):
     logger.info(f"Successfully created {examples_added} few-shot example turns (x2 message dicts).")
     return few_shot_messages
 
-def precompute_prompts_for_dataset_qwen(dataset_dir, categories, categories_dict):
+def precompute_prompts_for_dataset_qwen(dataset_dir, categories, categories_dict, model_name):
     """
     Precompute prompts for Qwen, including multi-turn few-shot.
     MODIFIED: Passes instructions separately for 'combined' mode to mimic Gemini logic.
@@ -282,7 +292,7 @@ def precompute_prompts_for_dataset_qwen(dataset_dir, categories, categories_dict
          final_query_text_instructions_standalone = final_query_text_basic
 
     few_shot_messages_list = []
-    few_shot_messages_list = create_few_shot_messages_qwen(train_folder, categories_dict)
+    few_shot_messages_list = create_few_shot_messages_qwen(train_folder, categories_dict, model_name)
 
     few_shot_system_prompt = basic_system_prompt
     final_query_text_few_shot = final_query_text_basic
@@ -300,7 +310,7 @@ def precompute_prompts_for_dataset_qwen(dataset_dir, categories, categories_dict
     return prompts
 
 def convert_to_coco_format(qwen_predictions, image_id, original_width, original_height, 
-                           input_width, input_height, categories_dict):
+                            input_width, input_height, categories_dict):
     """Convert Qwen detection results to COCO format"""
     coco_annotations = []
     
@@ -360,7 +370,7 @@ def process_image(args):
     (image_info, image_id, file_name, height, width,
      test_folder, categories_dict, results_dir, vis_dir,
      prompts, few_shot, just_instructions, combined, status_file,
-     status_file_lock, model, processor) = args
+     status_file_lock, model, processor, model_name) = args
 
     
 
@@ -433,8 +443,11 @@ def process_image(args):
 
         final_messages.extend(processed_few_shot_messages)
         
-        input_height, input_width = smart_resize(height, width, min_pixels=MIN_PIXELS, max_pixels=MAX_PIXELS)
-
+        input_height = 1000
+        input_width = 1000
+        if(model_name.startswith("Qwen2.5-VL")):
+            input_height, input_width = smart_resize(height, width, min_pixels=MIN_PIXELS, max_pixels=MAX_PIXELS)
+        # import pdb;pdb.set_trace()
         final_user_message = {
             "role": "user",
             "content": [
@@ -452,15 +465,15 @@ def process_image(args):
 
         logger.info(f"INITIATING MODEL call for image {file_name} (ID: {image_id}) using mode '{mode}' with {len(final_messages)} total messages.")
 
-        response_text,_, _  = inference(
+        response_text  = inference(
             messages=final_messages,
             model=model,
             processor = processor
         )
 
         coco_annotations, original_boxes_for_vis = convert_to_coco_format(
-            response_text, image_id, width, height,
-            input_width, input_height, categories_dict
+            response_text, image_id, width, height, input_width, input_height,
+            categories_dict
         )
 
         if not coco_annotations:
@@ -486,7 +499,7 @@ def process_image(args):
 
     return coco_annotations, error_message_for_return, current_attempt_status, image_key
 
-def process_dataset(model, processor, dataset_dir, few_shot, just_instructions, combined, results_dir, vis_dir):
+def process_dataset(model, processor, dataset_dir, few_shot, just_instructions, combined, results_dir, vis_dir, model_name,debug):
     """Process a single dataset using the selected mode and status file."""
     dataset_name = os.path.basename(dataset_dir)
 
@@ -507,8 +520,8 @@ def process_dataset(model, processor, dataset_dir, few_shot, just_instructions, 
     category_names = [cat["name"] for cat in categories]
     categories_dict = {cat["id"]: cat["name"] for cat in categories}
 
-    prompts = precompute_prompts_for_dataset_qwen(dataset_dir, category_names, categories_dict)
-    # import pdb;pdb.set_trace()
+    prompts = precompute_prompts_for_dataset_qwen(dataset_dir, category_names, categories_dict, model_name)
+    
     images = annotations.get("images", [])
 
     results_file = os.path.join(results_dir, f"predictions_"+dataset_name+".json")
@@ -518,7 +531,7 @@ def process_dataset(model, processor, dataset_dir, few_shot, just_instructions, 
     error_count = 0
     skipped_count = 0
 
-    logger.info(f"Processing dataset: {dataset_name} with model {MODEL_NAME}")
+    logger.info(f"Processing dataset: {dataset_name} with model {model_name}")
     logger.info(f"Found {len(images)} images in annotations.")
     logger.info(f"Results will be stored in {results_dir}")
     logger.info(f"Status file: {os.path.join(results_dir, dataset_name+'_status.pkl')}")
@@ -539,15 +552,6 @@ def process_dataset(model, processor, dataset_dir, few_shot, just_instructions, 
                 current_master_status_on_disk = {}
     master_status_dict_to_update = current_master_status_on_disk.copy()
 
-    args_list = [
-        (image_info, image_info["id"], image_info["file_name"],
-         image_info["height"], image_info["width"],
-         test_folder,
-         categories_dict, results_dir, vis_dir,
-         prompts, few_shot, just_instructions, combined,status_file,
-         status_file_lock,model,processor)
-        for image_info in images
-    ]
 
     results_map = {}
     for ann in existing_results:
@@ -557,44 +561,52 @@ def process_dataset(model, processor, dataset_dir, few_shot, just_instructions, 
                 results_map[img_id] = []
             results_map[img_id].append(ann)
 
-    total_images_to_process = len(args_list)
+    total_images_to_process = len(images)
 
-    with torch.inference_mode():
+    # with concurrent.futures.ThreadPoolExecutor(max_workers=MAX_WORKERS) as executor:
+    #     futures = {executor.submit(process_image, args): args[1] for args in args_list}
 
-        with concurrent.futures.ThreadPoolExecutor(max_workers=MAX_WORKERS) as executor:
-            futures = {executor.submit(process_image, args): args[1] for args in args_list}
+    #     with tqdm(total=len(futures), desc=f"Processing {dataset_name}", unit="image", leave=False) as pbar:
+    for image_info in tqdm(images, desc=f"Processing {dataset_name}", unit="image"):
+        # if(image_info["file_name"] != 'IMG_2279_jpeg_jpg.rf.0a869bcdd1d8dcf306906cc6df1fe9d5.jpg'):
+        #     continue
+        # # if(processed_count >= 10):
+        #     break
+        if(debug and processed_count >= 3):
+            break
+        try:
+            img_id = image_info["id"]
+            coco_result, error_msg, image_was_successful, processed_image_key_str = process_image((
+                image_info, image_info["id"], image_info["file_name"],
+                image_info["height"], image_info["width"],
+                test_folder,
+                categories_dict, results_dir, vis_dir,
+                prompts, few_shot, just_instructions, combined,status_file,
+                status_file_lock,model, processor, model_name
+            ))
+            processed_count += 1
 
-            with tqdm(total=len(futures), desc=f"Processing {dataset_name}", unit="image", leave=False) as pbar:
-                for future in concurrent.futures.as_completed(futures):
-                    image_id_from_future_key = futures[future]
+            if error_msg:
+                error_count += 1
+                print(f"Image ID {img_id}: Error - {error_msg}")
+                results_map.setdefault(img_id, [])
+            elif coco_result is None and error_msg is None:
+                skipped_count += 1
+                results_map.setdefault(img_id, [])
+                logger.debug(f"Image ID {img_id}: Confirmed skip based on status (already True).")
+                master_status_dict_to_update[processed_image_key_str] = True
+            elif coco_result is not None and error_msg is None:
+                results_map[img_id] = coco_result
+                if image_was_successful:
+                        master_status_dict_to_update[processed_image_key_str] = True
+                logger.debug(f"Updated results for image {img_id}. Success: {image_was_successful}")
 
-                    try:
-                        coco_result, error_msg, image_was_successful, processed_image_key_str = future.result()
-                        processed_count += 1
-
-                        if error_msg:
-                            error_count += 1
-                            pbar.write(f"Image ID {image_id_from_future_key}: Error - {error_msg}")
-                            results_map.setdefault(image_id_from_future_key, [])
-                        elif coco_result is None and error_msg is None:
-                            skipped_count += 1
-                            results_map.setdefault(image_id_from_future_key, [])
-                            logger.debug(f"Image ID {image_id_from_future_key}: Confirmed skip based on status (already True).")
-                            master_status_dict_to_update[processed_image_key_str] = True
-                        elif coco_result is not None and error_msg is None:
-                            results_map[image_id_from_future_key] = coco_result
-                            if image_was_successful:
-                                master_status_dict_to_update[processed_image_key_str] = True
-                            logger.debug(f"Updated results for image {image_id_from_future_key}. Success: {image_was_successful}")
-
-                    except Exception as exc:
-                        processed_count += 1
-                        error_count += 1
-                        logger.error(f"Image ID {image_id_from_future_key} generated an exception during future processing: {exc}", exc_info=True)
-                        pbar.write(f"Image ID {image_id_from_future_key}: Worker exception - {exc}")
-                        results_map.setdefault(image_id_from_future_key, [])
-
-                    pbar.update(1)
+        except Exception as exc:
+            processed_count += 1
+            error_count += 1
+            logger.error(f"Image ID {img_id} generated an exception during future processing: {exc}", exc_info=True)
+            print(f"Image ID {img_id}: Worker exception - {exc}")
+            results_map.setdefault(img_id, [])
 
     final_results_list = []
     for img_id, annotations_list in results_map.items():
@@ -642,7 +654,11 @@ def main():
                         help='Optional custom root directory to save results and visualizations')
     parser.add_argument('--data_dir', type=str, default=None,
                         help='dir where data is there')
+    parser.add_argument('--model_name', type=str, default="Qwen3-VL-235B-A22B-Instruct",
+                        help='model name')
     parser.add_argument("--cuda", type=int, default=0, help="CUDA device id to use")
+    parser.add_argument("--parallel", action='store_true', help="Whether to divide datasets and run them on different GPUs")
+    parser.add_argument("--debug", action='store_true')
     
     args = parser.parse_args()
 
@@ -656,7 +672,14 @@ def main():
         eval_mode_str = "instructions"
     else:
         eval_mode_str = "basic"
-    run_name = MODEL_NAME+"_"+eval_mode_str+"_"+MODEL_DESC
+    if args.parallel:
+        eval_mode_str = eval_mode_str+"_parallel"
+    else:
+        eval_mode_str = eval_mode_str+"_serial"
+    if args.debug:
+        eval_mode_str = eval_mode_str + "_debug"
+
+    run_name = args.model_name+"_"+eval_mode_str+"_"+MODEL_DESC
 
     log_file_name_base = run_name
 
@@ -692,14 +715,26 @@ def main():
     # for d in glob.glob(os.path.join(args.data_dir, "*")):
     #     print(os.path.basename(d))
 
-    all_dataset_dirs = sorted([d for d in glob.glob(os.path.join(args.data_dir, "*"))
-                               if os.path.isdir(d) and os.path.exists(os.path.join(d, "test")) and os.path.basename(d) in DATASET[args.cuda] ])
+    # all_dataset_dirs = sorted([d for d in glob.glob(os.path.join(args.data_dir, "*"))
+    #                            if os.path.isdir(d) and os.path.exists(os.path.join(d, "test")) 
+    #                            and (args.parallel and os.path.basename(d) in DATASET[args.cuda]) 
+    #                            ])
+    all_dataset_dirs = []
+
+    for d in glob.glob(os.path.join(args.data_dir, "*")):
+        if os.path.isdir(d) and os.path.exists(os.path.join(d, "test")):
+            if args.parallel:
+                if os.path.basename(d) in DATASET[args.cuda]:
+                    all_dataset_dirs.append(d)
+            else:
+                all_dataset_dirs.append(d)
+    all_dataset_dirs = sorted(all_dataset_dirs)
 
     logger.info(f"Found {len(all_dataset_dirs)} total datasets in {args.data_dir}. Will process all.")
     logger.info(f"Selected mode: {eval_mode_str}")
-    logger.info(f"Using model: {MODEL_NAME}")
+    logger.info(f"Using model: {args.model_name}")
 
-    model, processor = load_qwen_model()
+    model, processor = load_qwen_model(args.model_name)
 
     dataset_stats = {}
     for dataset_dir in tqdm(all_dataset_dirs, desc="Processing datasets", unit="dataset"):
@@ -713,7 +748,9 @@ def main():
             args.just_instructions,
             args.combined,
             output_dir_root,
-            visualize_dir_root
+            visualize_dir_root,
+            args.model_name,
+            args.debug,
         )
         dataset_stats[dataset_name] = {"processed": processed, "errors": errored, "skipped": skipped}
         logger.info(f"Finished processing dataset: {dataset_name}")
