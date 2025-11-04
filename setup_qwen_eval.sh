@@ -73,10 +73,10 @@ echo "===exporting roboflow key==="
 export ROBOFLOW_API_KEY=$api_key
 
 echo "=== Downloading the data ==="
-mkdir data
+mkdir -p data
 python download_data_roboflow.py --data_dir data/
 
 echo "===making dir for result==="
-mkdir results
+mkdir -p results
 
 echo "===script successful!!! ======"
