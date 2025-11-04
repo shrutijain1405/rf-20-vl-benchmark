@@ -62,7 +62,7 @@ def load_qwen_model(model_name):
         attn_implementation="flash_attention_2",
         device_map="auto"
     )
-    elif(model_name.startswith("Qwen3-VL-235B")):
+    elif(model_name.startswith("Qwen3-VL-235B") or model_name.startswith("Qwen3-VL-30B")):
         model = Qwen3VLMoeForConditionalGeneration.from_pretrained(
             "Qwen/"+model_name, torch_dtype=torch.bfloat16, attn_implementation="flash_attention_2", device_map="auto"
         ) 
