@@ -19,6 +19,10 @@ import torch
 NUM_FEW_SHOT_EXAMPLES = 3
 # MODEL_NAME = "Qwen2.5-VL-7B-Instruct"
 # MODEL_NAME = "Qwen3-VL-4B-Instruct"
+# MODEL_NAME = "Qwen3-VL-8B-Instruct"
+# MODEL_NAME = "Qwen2.5-VL-72B-Instruct"
+# MODEL_NAME = "Qwen3-VL-235B-A22B-Instruct-FP8"
+
 MODEL_DESC = ""
 # ROOT_DIR = "/data3/spjain/rf20-vl-fsod"
 DATASET = {
@@ -62,6 +66,16 @@ def load_qwen_model(model_name):
         attn_implementation="flash_attention_2",
         device_map="auto"
     )
+    elif(model_name == "Qwen3-VL-235B-A22B-Instruct-FP8"):
+        model = LLM(
+            model="Qwen/"+model_name,
+            trust_remote_code=True,
+            gpu_memory_utilization=0.80,
+            enforce_eager=False,
+            tensor_parallel_size=torch.cuda.device_count(),
+            seed=0
+        )
+        
     elif(model_name.startswith("Qwen3-VL-235B") or model_name.startswith("Qwen3-VL-30B")):
         model = Qwen3VLMoeForConditionalGeneration.from_pretrained(
             "Qwen/"+model_name, torch_dtype=torch.bfloat16, attn_implementation="flash_attention_2", device_map="auto"
@@ -107,7 +121,7 @@ def load_qwen_model(model_name):
 
     return model, processor
 
-def inference(messages, model, processor):
+def inference(messages, model, processor, model_name):
     set_seed()
     text_input = processor.apply_chat_template(
         messages, tokenize=False, add_generation_prompt=True
@@ -125,7 +139,16 @@ def inference(messages, model, processor):
     with torch.no_grad():
         # generated_ids = model.generate(**inputs, max_new_tokens=512)
         # generated_ids = model.generate(**inputs, max_new_tokens=1024)
-        generated_ids = model.generate(**inputs, max_new_tokens=2048)
+        if(model_name == "Qwen3-VL-235B-A22B-Instruct-FP8"):
+            sampling_params = SamplingParams(
+                temperature=0,
+                max_tokens=2048,
+                top_k=-1,
+                stop_token_ids=[],
+            )
+            generated_ids = model.generate(**inputs, sampling_params)
+        else:
+            generated_ids = model.generate(**inputs, max_new_tokens=2048)
 
 
     generated_ids_trimmed = [
@@ -468,7 +491,8 @@ def process_image(args):
         response_text  = inference(
             messages=final_messages,
             model=model,
-            processor = processor
+            processor = processor,
+            model_name = model_name
         )
 
         coco_annotations, original_boxes_for_vis = convert_to_coco_format(
