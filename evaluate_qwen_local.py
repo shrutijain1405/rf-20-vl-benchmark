@@ -28,11 +28,11 @@ MODEL_DESC = ""
 DATASET = {
     0 : ["actions", "aerial-airport"],
     1 : ["aquarium-combined", "defect-detection", "dentalai", "trail-camera"],
-    3 : ["gwhd2021", "lacrosse-object-detection", "all-elements"],
+    3 : ["gwhd2021", "lacrosse-object-detection", "all-elements","x-ray-id"],
     4 : ["soda-bottles", "orionproducts", "wildfire-smoke"],
     5 : ["paper-parts"],
     6 : ["new-defects-in-wood", "the-dreidel-project","recode-waste"],
-    7 : ["flir-camera-objects", "water-meter", "wb-prova","x-ray-id"]
+    7 : ["flir-camera-objects", "water-meter", "wb-prova"]
 }
 
 
@@ -60,36 +60,40 @@ def load_qwen_model(model_name):
    
     model = None
     if(model_name.startswith("Qwen2.5-VL")):
-         model = Qwen2_5_VLForConditionalGeneration.from_pretrained(
-        "Qwen/"+model_name,
-        torch_dtype= torch.bfloat16,
-        attn_implementation="flash_attention_2",
-        device_map="auto"
-    )
-    elif(model_name == "Qwen3-VL-235B-A22B-Instruct-FP8"):
+        model = Qwen2_5_VLForConditionalGeneration.from_pretrained(
+            "Qwen/"+model_name,
+            torch_dtype= torch.bfloat16,
+            attn_implementation="flash_attention_2",
+            device_map="auto"
+        )
+        model.eval()
+    elif(model_name == "Qwen3-VL-2B-Instruct-FP8" or model_name == "Qwen3-VL-235B-A22B-Instruct-FP8"):
+        from vllm import LLM
         model = LLM(
             model="Qwen/"+model_name,
             trust_remote_code=True,
             gpu_memory_utilization=0.80,
             enforce_eager=False,
+            max_model_len=700,
             tensor_parallel_size=torch.cuda.device_count(),
             seed=0
         )
-        
     elif(model_name.startswith("Qwen3-VL-235B") or model_name.startswith("Qwen3-VL-30B")):
         model = Qwen3VLMoeForConditionalGeneration.from_pretrained(
             "Qwen/"+model_name, torch_dtype=torch.bfloat16, attn_implementation="flash_attention_2", device_map="auto"
         ) 
+        model.eval()
     elif(model_name.startswith("Qwen3-VL")):
         model = Qwen3VLForConditionalGeneration.from_pretrained(
             "Qwen/"+model_name, torch_dtype=torch.bfloat16, attn_implementation="flash_attention_2", device_map="auto"
         )
+        model.eval()
     else:
         print("Error: Invalid model name")
         return None, None
 
     processor = AutoProcessor.from_pretrained("Qwen/"+model_name)
-    model.eval()
+    
 
     print("processor.tokenizer.padding_side:", processor.tokenizer.padding_side)
     print("processor.tokenizer.pad_token:", processor.tokenizer.pad_token)
@@ -139,14 +143,15 @@ def inference(messages, model, processor, model_name):
     with torch.no_grad():
         # generated_ids = model.generate(**inputs, max_new_tokens=512)
         # generated_ids = model.generate(**inputs, max_new_tokens=1024)
-        if(model_name == "Qwen3-VL-235B-A22B-Instruct-FP8"):
+        if(model_name == "Qwen3-VL-2B-Instruct-FP8" or model_name == "Qwen3-VL-235B-A22B-Instruct-FP8"):
+            from vllm import SamplingParams
             sampling_params = SamplingParams(
                 temperature=0,
                 max_tokens=2048,
                 top_k=-1,
                 stop_token_ids=[],
             )
-            generated_ids = model.generate(**inputs, sampling_params)
+            generated_ids = model.generate(**inputs, sampling_params = sampling_params)
         else:
             generated_ids = model.generate(**inputs, max_new_tokens=2048)
 

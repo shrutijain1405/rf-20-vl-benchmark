@@ -58,6 +58,16 @@ conda install openai -y
 echo "===upgrading numpy==="
 conda install -c conda-forge numpy=2.0.1 -y
 
+echo "===creating env for FP8 ===="
+conda deactivate
+conda create --name qwen-fp8-env --clone qwen-eval-env
+source "$(conda info --base)/etc/profile.d/conda.sh"
+conda activate qwen-fp8-env
+
+echo "===installing uv and vllm in fp8 env===="
+pip install uv
+uv pip install vllm
+
 echo "=== installing roboflow ==="
 conda deactivate
 conda create -n rf100vl-env python=3.9.23 -y
@@ -68,6 +78,8 @@ conda activate rf100vl-env
 echo "Active Conda environment: $CONDA_DEFAULT_ENV"
 
 pip install rf100vl==1.1.0
+
+pip install pycocotools
 
 echo "===exporting roboflow key==="
 export ROBOFLOW_API_KEY=$api_key

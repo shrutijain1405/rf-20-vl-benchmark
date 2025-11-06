@@ -7,7 +7,7 @@ from collections import defaultdict
 from rf100vl.util import get_basename, get_category
 import numpy as np
 
-RESULT_DIR = '/home/spjain/qwen2.5_results_mat/results/Qwen2.5-VL-7B-Instruct_combined_serial_parse_fix/'
+RESULT_DIR = '/home/spjain/qwen3_results_mat/results/Qwen3-VL-8B-Instruct_instructions_parallel_/'
 DATA_DIR = '/data3/spjain/rf20-vl-fsod'
 
 all_dataset_dirs = {os.path.basename(d) : d for d in glob.glob(os.path.join(DATA_DIR, "*"))
