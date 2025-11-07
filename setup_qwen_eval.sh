@@ -1,15 +1,3 @@
-# conda create -n qwen-eval-env python=3.10 -y
-# source "$(conda info --base)/etc/profile.d/conda.sh"
-# conda activate qwen-eval-env
-# pip install torch==2.6.0 torchvision==0.21.0 torchaudio==2.6.0 --index-url https://download.pytorch.org/whl/cu126
-# conda install tqdm
-# pip install pycocotools
-# conda install transformers==4.57.0
-# pip install qwen_vl_utils
-# pip install accelerate
-# pip install https://github.com/Dao-AILab/flash-attention/releases/download/v2.7.4.post1/flash_attn-2.7.4.post1+cu12torch2.6cxx11abiTRUE-cp310-cp310-linux_x86_64.whl
-
-
 #!/bin/bash
 # Exit immediately if a command fails
 set -e

@@ -75,6 +75,7 @@ def load_qwen_model(model_name):
             trust_remote_code=True,
             gpu_memory_utilization=0.80,
             enforce_eager=False,
+            enable_expert_parallel = True,
             # max_model_len=700,
             tensor_parallel_size=torch.cuda.device_count(),
             seed=0
