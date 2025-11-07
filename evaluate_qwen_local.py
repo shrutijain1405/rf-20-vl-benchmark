@@ -14,6 +14,7 @@ from utils.shared_eval_utils import *
 from transformers import Qwen2_5_VLForConditionalGeneration, AutoProcessor, Qwen3VLForConditionalGeneration, Qwen3VLMoeForConditionalGeneration
 from qwen_vl_utils import process_vision_info
 import torch
+# os.environ['VLLM_WORKER_MULTIPROC_METHOD'] = 'spawn'
 
 
 NUM_FEW_SHOT_EXAMPLES = 3
@@ -74,7 +75,7 @@ def load_qwen_model(model_name):
             trust_remote_code=True,
             gpu_memory_utilization=0.80,
             enforce_eager=False,
-            max_model_len=700,
+            # max_model_len=700,
             tensor_parallel_size=torch.cuda.device_count(),
             seed=0
         )
@@ -131,37 +132,50 @@ def inference(messages, model, processor, model_name):
         messages, tokenize=False, add_generation_prompt=True
     )
     image_inputs, video_inputs = process_vision_info(messages)
-    inputs = processor(
-        text=[text_input],
-        images=image_inputs,
-        videos=video_inputs,
-        padding=True,
-        return_tensors="pt",
-    )
-    inputs = inputs.to(model.device)
 
     with torch.no_grad():
         # generated_ids = model.generate(**inputs, max_new_tokens=512)
         # generated_ids = model.generate(**inputs, max_new_tokens=1024)
+        output_text = None
         if(model_name == "Qwen3-VL-2B-Instruct-FP8" or model_name == "Qwen3-VL-235B-A22B-Instruct-FP8"):
             from vllm import SamplingParams
+            mm_data = {}
+            if image_inputs is not None:
+                mm_data['image'] = image_inputs
+            if video_inputs is not None:
+                mm_data['video'] = video_inputs
+
+            inputs =  {
+                'prompt': text_input,
+                'multi_modal_data': mm_data,
+            }
             sampling_params = SamplingParams(
                 temperature=0,
                 max_tokens=2048,
                 top_k=-1,
                 stop_token_ids=[],
             )
-            generated_ids = model.generate(**inputs, sampling_params = sampling_params)
+            outputs = model.generate(inputs, sampling_params = sampling_params)
+            for i, output in enumerate(outputs):
+                output_text = output.outputs[0].text
+
         else:
+            inputs = processor(
+                text=[text_input],
+                images=image_inputs,
+                videos=video_inputs,
+                padding=True,
+                return_tensors="pt",
+            )
+            inputs = inputs.to(model.device)
             generated_ids = model.generate(**inputs, max_new_tokens=2048)
 
-
-    generated_ids_trimmed = [
-        out_ids[len(in_ids) :] for in_ids, out_ids in zip(inputs["input_ids"], generated_ids)
-    ]
-    output_text = processor.batch_decode(
-        generated_ids_trimmed, skip_special_tokens=True, clean_up_tokenization_spaces=False
-    )[0]
+            generated_ids_trimmed = [
+                out_ids[len(in_ids) :] for in_ids, out_ids in zip(inputs["input_ids"], generated_ids)
+            ]
+            output_text = processor.batch_decode(
+                generated_ids_trimmed, skip_special_tokens=True, clean_up_tokenization_spaces=False
+            )[0]
 
     #Sample
     # ```json

@@ -60,13 +60,36 @@ conda install -c conda-forge numpy=2.0.1 -y
 
 echo "===creating env for FP8 ===="
 conda deactivate
-conda create --name qwen-fp8-env --clone qwen-eval-env
+conda create -n qwen-fp8-env python=3.10 -y
 source "$(conda info --base)/etc/profile.d/conda.sh"
 conda activate qwen-fp8-env
 
-echo "===installing uv and vllm in fp8 env===="
-pip install uv
-uv pip install vllm
+echo "===installing vllm in fp8 env===="
+pip install vllm
+
+echo "=== Installing tqdm ==="
+conda install -y tqdm
+
+echo "=== Installing pycocotools ==="
+pip install pycocotools
+
+echo "=== Installing transformers ==="
+pip install transformers==4.57.0
+
+echo "=== Installing qwen_vl_utils ==="
+pip install qwen_vl_utils==0.0.8
+
+echo "=== Installing accelerate ==="
+pip install accelerate
+
+echo "=== Installing opencv ==="
+conda install -c conda-forge opencv -y
+
+echo "=== Installing supervision ==="
+conda install -c conda-forge supervision -y
+
+echo "===upgrading numpy==="
+conda install -c conda-forge numpy=2.0.1 -y
 
 echo "=== installing roboflow ==="
 conda deactivate
@@ -79,6 +102,7 @@ echo "Active Conda environment: $CONDA_DEFAULT_ENV"
 
 pip install rf100vl==1.1.0
 
+echo "=== installing pycocotools ==="
 pip install pycocotools
 
 echo "===exporting roboflow key==="
