@@ -8,6 +8,7 @@ import logging
 import argparse
 import pickle
 import copy
+import gc
 from qwen_vl_utils import smart_resize #expects qwen-vl-utils==0.0.8
 from utils.qwen_eval_utils import *
 from utils.shared_eval_utils import *
