@@ -11,10 +11,11 @@ import copy
 from qwen_vl_utils import smart_resize #expects qwen-vl-utils==0.0.8
 from utils.qwen_eval_utils import *
 from utils.shared_eval_utils import *
-from transformers import Qwen2_5_VLForConditionalGeneration, AutoProcessor, Qwen3VLForConditionalGeneration, Qwen3VLMoeForConditionalGeneration
+from utils.thinking_budget_processor import ThinkingTokenBudgetProcessor
+from transformers import Qwen2_5_VLForConditionalGeneration, AutoProcessor, Qwen3VLForConditionalGeneration, Qwen3VLMoeForConditionalGeneration, AutoTokenizer
 from qwen_vl_utils import process_vision_info
 import torch
-# os.environ['VLLM_WORKER_MULTIPROC_METHOD'] = 'spawn'
+os.environ['VLLM_WORKER_MULTIPROC_METHOD'] = 'spawn'
 
 
 NUM_FEW_SHOT_EXAMPLES = 3
@@ -29,11 +30,11 @@ MODEL_DESC = ""
 DATASET = {
     0 : ["actions", "aerial-airport"],
     1 : ["aquarium-combined", "defect-detection", "dentalai", "trail-camera"],
-    3 : ["gwhd2021", "lacrosse-object-detection", "all-elements","x-ray-id"],
-    4 : ["soda-bottles", "orionproducts", "wildfire-smoke"],
+    3 : ["lacrosse-object-detection", "all-elements"],
+    4 : ["soda-bottles", "orionproducts", "wildfire-smoke","gwhd2021"],
     5 : ["paper-parts"],
     6 : ["new-defects-in-wood", "the-dreidel-project","recode-waste"],
-    7 : ["flir-camera-objects", "water-meter", "wb-prova"]
+    7 : ["flir-camera-objects", "water-meter", "wb-prova","x-ray-id"]
 }
 
 
@@ -56,7 +57,7 @@ def set_seed(seed=100):
         torch.cuda.manual_seed_all(seed)
 
 
-def load_qwen_model(model_name):
+def load_qwen_model(model_name, vllm):
     
    
     model = None
@@ -68,14 +69,18 @@ def load_qwen_model(model_name):
             device_map="auto"
         )
         model.eval()
-    elif(model_name == "Qwen3-VL-2B-Instruct-FP8" or model_name == "Qwen3-VL-235B-A22B-Instruct-FP8"):
+    elif(model_name == "Qwen3-VL-2B-Instruct-FP8" or model_name == "Qwen3-VL-235B-A22B-Instruct-FP8" or vllm == True):
+        if("FP8" in model_name):
+            enable_expert_parallel = True
+        else:
+            enable_expert_parallel = False
         from vllm import LLM
         model = LLM(
             model="Qwen/"+model_name,
             trust_remote_code=True,
             gpu_memory_utilization=0.80,
             enforce_eager=False,
-            enable_expert_parallel = True,
+            enable_expert_parallel = enable_expert_parallel,
             # max_model_len=700,
             tensor_parallel_size=torch.cuda.device_count(),
             seed=0
@@ -93,9 +98,10 @@ def load_qwen_model(model_name):
     else:
         print("Error: Invalid model name")
         return None, None
+    
 
     processor = AutoProcessor.from_pretrained("Qwen/"+model_name)
-    
+
 
     print("processor.tokenizer.padding_side:", processor.tokenizer.padding_side)
     print("processor.tokenizer.pad_token:", processor.tokenizer.pad_token)
@@ -105,14 +111,6 @@ def load_qwen_model(model_name):
     tokenizer = processor.tokenizer  # access the underlying tokenizer
 
     tokenizer.padding_side = "left"  # left padding for decoder-only models
-
-
-    # 2. Keep "<|endoftext|>" as pad token (already set)
-    # Do NOT overwrite with eos_token ("<|im_end|>")
-
-    # # Ensure PAD token exists
-    # if tokenizer.pad_token is None:
-    #     tokenizer.pad_token = tokenizer.eos_token
 
     # Save these updates into the processor so it uses them
     processor.tokenizer = tokenizer
@@ -127,19 +125,26 @@ def load_qwen_model(model_name):
 
     return model, processor
 
-def inference(messages, model, processor, model_name):
+def inference(messages, model, processor, model_name, vllm):
     set_seed()
+    assert(processor is not None)
+
     text_input = processor.apply_chat_template(
-        messages, tokenize=False, add_generation_prompt=True
+        messages, tokenize=False, add_generation_prompt=True #, enable_thinking=True
     )
     image_inputs, video_inputs = process_vision_info(messages)
 
+    if("Thinking" in model_name):
+        max_tokens = 32768
+    else:
+        max_tokens = 2048
+
     with torch.no_grad():
-        # generated_ids = model.generate(**inputs, max_new_tokens=512)
-        # generated_ids = model.generate(**inputs, max_new_tokens=1024)
+
         output_text = None
-        if(model_name == "Qwen3-VL-2B-Instruct-FP8" or model_name == "Qwen3-VL-235B-A22B-Instruct-FP8"):
+        if(model_name == "Qwen3-VL-2B-Instruct-FP8" or model_name == "Qwen3-VL-235B-A22B-Instruct-FP8" or vllm == True):
             from vllm import SamplingParams
+            
             mm_data = {}
             if image_inputs is not None:
                 mm_data['image'] = image_inputs
@@ -151,11 +156,12 @@ def inference(messages, model, processor, model_name):
                 'multi_modal_data': mm_data,
             }
             sampling_params = SamplingParams(
-                temperature=0,
-                max_tokens=2048,
-                top_k=-1,
-                stop_token_ids=[],
-            )
+                    temperature=0,
+                    max_tokens=max_tokens,
+                    top_k=-1,
+                    stop_token_ids=[]
+                )
+            
             outputs = model.generate(inputs, sampling_params = sampling_params)
             for i, output in enumerate(outputs):
                 output_text = output.outputs[0].text
@@ -169,14 +175,21 @@ def inference(messages, model, processor, model_name):
                 return_tensors="pt",
             )
             inputs = inputs.to(model.device)
-            generated_ids = model.generate(**inputs, max_new_tokens=2048)
-
+            if("Thinking" in model_name):
+                logits_processor = [
+                    ThinkingTokenBudgetProcessor(processor.tokenizer, max_thinking_tokens=30720)
+                ]
+                generated_ids = model.generate(**inputs, logits_processor=logits_processor, max_new_tokens=max_tokens)
+            else: 
+                generated_ids = model.generate(**inputs, max_new_tokens=max_tokens)
+            
             generated_ids_trimmed = [
                 out_ids[len(in_ids) :] for in_ids, out_ids in zip(inputs["input_ids"], generated_ids)
             ]
             output_text = processor.batch_decode(
                 generated_ids_trimmed, skip_special_tokens=True, clean_up_tokenization_spaces=False
             )[0]
+
 
     #Sample
     # ```json
@@ -249,7 +262,7 @@ def create_few_shot_messages_qwen(train_folder, categories_dict, model_name):
     annotated_image_ids = list(annotations_by_image.keys())
 
     category_prompt = ", ".join(categories_dict.values())
-    user_prompt_text_for_example = f"Locate all of the following objects: {category_prompt} (each of those is a separate class) in the image and output the coordinates in JSON format."
+    user_prompt_text_for_example = f"Locate all of the following objects: {category_prompt} (each of those is a separate class) in the image and output the coordinates in JSON format like {{\"bbox_2d\":[x1,y1,x2,y2],\"label\":\"class_name\"}}."
 
     examples_added = 0
     for img_id in annotated_image_ids:
@@ -326,11 +339,11 @@ def precompute_prompts_for_dataset_qwen(dataset_dir, categories, categories_dict
     basic_system_prompt = SYSTEM_PROMPT
 
     category_prompt = ", ".join(categories)
-    final_query_text_basic = f"Locate all of the following objects: {category_prompt} in the image and output the coordinates in JSON format." # Saying (each of those is a separate class) might be helpful, but dropped for now
+    final_query_text_basic = f"Locate all of the following objects: {category_prompt} in the image and output the coordinates in JSON format like {{\"bbox_2d\":[x1,y1,x2,y2],\"label\":\"class_name\"}}." # Saying (each of those is a separate class) might be helpful, but dropped for now
 
     instructions_system_prompt = basic_system_prompt
     if instructions:
-         final_query_text_instructions_standalone = f"Locate all of the following objects: {category_prompt} in the image and output the coordinates in JSON format.\n\nUse the following annotator instructions to improve detection accuracy:\n{instructions}\n"
+         final_query_text_instructions_standalone = f"Locate all of the following objects: {category_prompt} in the image and output the coordinates in JSON format like {{\"bbox_2d\":[x1,y1,x2,y2],\"label\":\"class_name\"}}.\n\nUse the following annotator instructions to improve detection accuracy:\n{instructions}\n"
     else:
          final_query_text_instructions_standalone = final_query_text_basic
 
@@ -413,8 +426,8 @@ def process_image(args):
     (image_info, image_id, file_name, height, width,
      test_folder, categories_dict, results_dir, vis_dir,
      prompts, few_shot, just_instructions, combined, status_file,
-     status_file_lock, model, processor, model_name) = args
-
+     status_file_lock, model, processor, model_name,vllm) = args
+    assert(processor is not None)
     
 
     status_dict = {}
@@ -490,6 +503,10 @@ def process_image(args):
         input_width = 1000
         if(model_name.startswith("Qwen2.5-VL")):
             input_height, input_width = smart_resize(height, width, min_pixels=MIN_PIXELS, max_pixels=MAX_PIXELS)
+        if("Thinking" in  model_name):
+            temperature = 0.8
+        else:
+            temperature = 0.0
         # import pdb;pdb.set_trace()
         final_user_message = {
             "role": "user",
@@ -502,17 +519,18 @@ def process_image(args):
                 },
                 {"type": "text", "text": final_query_text},
             ],
-            "temperature": 0.0
+            "temperature": temperature
         }
         final_messages.append(final_user_message)
 
         logger.info(f"INITIATING MODEL call for image {file_name} (ID: {image_id}) using mode '{mode}' with {len(final_messages)} total messages.")
-
+        assert(processor is not None)
         response_text  = inference(
             messages=final_messages,
             model=model,
             processor = processor,
-            model_name = model_name
+            model_name = model_name,
+            vllm = vllm
         )
 
         coco_annotations, original_boxes_for_vis = convert_to_coco_format(
@@ -543,8 +561,9 @@ def process_image(args):
 
     return coco_annotations, error_message_for_return, current_attempt_status, image_key
 
-def process_dataset(model, processor, dataset_dir, few_shot, just_instructions, combined, results_dir, vis_dir, model_name,debug):
+def process_dataset(model, processor, dataset_dir, few_shot, just_instructions, combined, results_dir, vis_dir, model_name,debug,vllm):
     """Process a single dataset using the selected mode and status file."""
+    assert(processor is not None)
     dataset_name = os.path.basename(dataset_dir)
 
     status_file = os.path.join(results_dir, dataset_name+"_status.pkl")
@@ -620,13 +639,14 @@ def process_dataset(model, processor, dataset_dir, few_shot, just_instructions, 
             break
         try:
             img_id = image_info["id"]
+            assert(processor is not None)
             coco_result, error_msg, image_was_successful, processed_image_key_str = process_image((
                 image_info, image_info["id"], image_info["file_name"],
                 image_info["height"], image_info["width"],
                 test_folder,
                 categories_dict, results_dir, vis_dir,
                 prompts, few_shot, just_instructions, combined,status_file,
-                status_file_lock,model, processor, model_name
+                status_file_lock,model, processor, model_name, vllm
             ))
             processed_count += 1
 
@@ -700,9 +720,11 @@ def main():
                         help='dir where data is there')
     parser.add_argument('--model_name', type=str, default="Qwen3-VL-235B-A22B-Instruct",
                         help='model name')
+    parser.add_argument('--vllm', action='store_true')
     parser.add_argument("--cuda", type=int, default=0, help="CUDA device id to use")
     parser.add_argument("--parallel", action='store_true', help="Whether to divide datasets and run them on different GPUs")
     parser.add_argument("--debug", action='store_true')
+
     
     args = parser.parse_args()
 
@@ -716,6 +738,8 @@ def main():
         eval_mode_str = "instructions"
     else:
         eval_mode_str = "basic"
+    if args.vllm:
+        eval_mode_str = eval_mode_str+"_vllm"
     if args.parallel:
         eval_mode_str = eval_mode_str+"_parallel"
     else:
@@ -771,6 +795,7 @@ def main():
                 if os.path.basename(d) in DATASET[args.cuda]:
                     all_dataset_dirs.append(d)
             else:
+                # if(os.path.basename(d) == 'aquarium-combined'):
                 all_dataset_dirs.append(d)
     all_dataset_dirs = sorted(all_dataset_dirs)
 
@@ -778,7 +803,8 @@ def main():
     logger.info(f"Selected mode: {eval_mode_str}")
     logger.info(f"Using model: {args.model_name}")
 
-    model, processor = load_qwen_model(args.model_name)
+    model, processor = load_qwen_model(args.model_name,args.vllm)
+    assert(processor is not None)
 
     dataset_stats = {}
     for dataset_dir in tqdm(all_dataset_dirs, desc="Processing datasets", unit="dataset"):
@@ -795,6 +821,7 @@ def main():
             visualize_dir_root,
             args.model_name,
             args.debug,
+            args.vllm
         )
         dataset_stats[dataset_name] = {"processed": processed, "errors": errored, "skipped": skipped}
         logger.info(f"Finished processing dataset: {dataset_name}")

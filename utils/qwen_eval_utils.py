@@ -84,9 +84,14 @@ def parse_qwen_response(response, logger):
     """Parse the JSON response from Qwen model, handling markdown and potential issues"""
     if not response:
         return []
+    
+    
 
     json_text = ""
     try:
+        print("************************ ",response)
+        response = re.sub(r"^.*?</think>\s*", "", response, flags=re.DOTALL) #retains stuff only after </think> token if it exists 
+        
         if "```json" in response:
             json_text = response.split("```json", 1)[1].split("```", 1)[0].strip()
         elif "```" in response:

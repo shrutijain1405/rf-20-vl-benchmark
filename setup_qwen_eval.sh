@@ -79,6 +79,10 @@ conda install -c conda-forge supervision -y
 echo "===upgrading numpy==="
 conda install -c conda-forge numpy=2.0.1 -y
 
+echo "=====installing flash infer======"
+conda install -c conda-forge gcc=11 gxx=11 -y
+pip install flashinfer-python
+
 echo "=== installing roboflow ==="
 conda deactivate
 conda create -n rf100vl-env python=3.9.23 -y
