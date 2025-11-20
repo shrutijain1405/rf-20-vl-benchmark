@@ -8,6 +8,7 @@ import logging
 import argparse
 import pickle
 import copy
+import gc
 from qwen_vl_utils import smart_resize #expects qwen-vl-utils==0.0.8
 from utils.qwen_eval_utils import *
 from utils.shared_eval_utils import *
@@ -749,8 +750,6 @@ def main():
     logger.info(f"Selected mode: {eval_mode_str}")
     logger.info(f"Using model: {args.model_name}")
 
-    
-
     dataset_stats = {}
     for dataset_dir in tqdm(all_dataset_dirs, desc="Processing datasets", unit="dataset"):
         dataset_name = os.path.basename(dataset_dir)
@@ -768,9 +767,13 @@ def main():
             args.combined,
             output_dir_root,
             visualize_dir_root,
-            args.model_name, #
+            args.model_name,
             args.debug,
         )
+
+        torch.cuda.empty_cache()
+        gc.collect()
+
         dataset_stats[dataset_name] = {"processed": processed, "errors": errored, "skipped": skipped}
         logger.info(f"Finished processing dataset: {dataset_name}")
 
